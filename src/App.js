@@ -396,7 +396,7 @@ function App() {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        launchpadId: lpId,
+                        launchpadPhase: buyData.launchpadPhase,
                         ordinalId: buyData.ordinalId,
                         signedBuyerPSBTBase64: signedPsbt
                     })
@@ -631,7 +631,7 @@ function App() {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    launchpadId: launchpadId,
+                    launchpadPhase: buyResult.launchpadPhase,
                     ordinalId: buyResult.ordinalId, // Предполагается, что ordinalId приходит в ответе
                     signedBuyerPSBTBase64: signedBuyPsbtBase64
                 })
