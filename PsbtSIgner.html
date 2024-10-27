@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Signing PSBT via UniSat Wallet</title>
+    <style>
+        /* Ваши стили здесь */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 700px; /* Увеличена ширина для добавления новых элементов */
+            margin: auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        input, button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 10px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #9E9E9E;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            min-height: 50px;
+            white-space: pre-wrap;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Signing PSBT via UniSat Wallet</h2>
+
+    <button id="connectWallet">Connect UniSat Wallet</button>
+
+    <label for="launchpadId">Launchpad ID:</label>
+    <input type="text" id="launchpadId" placeholder="Enter launchpadId" />
+
+    <button id="getAndSignPsbt">Get and Sign PSBT</button>
+
+    <!-- Новая кнопка Mint -->
+    <button id="mintButton">Mint</button>
+
+    <div id="status">Status: Waiting for actions.</div>
+</div>
+
+<!-- JavaScript для взаимодействия с UniSat Wallet -->
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // Функция для обновления статуса
+        function updateStatus(message) {
+            document.getElementById('status').textContent = `Status: ${message}`;
+        }
+
+        // Функция для проверки наличия window.unisat с повторными попытками
+        function checkUniSat(maxRetries = 10, interval = 500) {
+            let retries = 0;
+            return new Promise((resolve, reject) => {
+                const timer = setInterval(() => {
+                    if (typeof window.unisat !== 'undefined') {
+                        clearInterval(timer);
+                        resolve(window.unisat);
+                    } else {
+                        retries++;
+                        console.log(`Checking UniSat Wallet: attempt ${retries}`);
+                        if (retries >= maxRetries) {
+                            clearInterval(timer);
+                            reject(new Error('UniSat Wallet not detected after several attempts.'));
+                        }
+                    }
+                }, interval);
+            });
+        }
+
+        // Функция для конвертации Hex в Base64
+        function hexToBase64(hex) {
+            // Проверка корректности длины hex строки
+            if (hex.length % 2 !== 0) {
+                throw new Error('Hex string must have an even number of characters');
+            }
+
+            // Конвертация hex в байты
+            const bytes = hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16));
+
+            // Конвертация байтов в бинарную строку
+            let binary = '';
+            bytes.forEach(byte => binary += String.fromCharCode(byte));
+
+            // Конвертация бинарной строки в Base64
+            return btoa(binary);
+        }
+
+        // Инициализация после подтверждения наличия window.unisat
+        checkUniSat()
+            .then(unisat => {
+                console.log('UniSat Wallet detected:', unisat);
+                updateStatus('UniSat Wallet detected. Ready to connect.');
+
+                const connectButton = document.getElementById('connectWallet');
+                const getAndSignButton = document.getElementById('getAndSignPsbt');
+                const mintButton = document.getElementById('mintButton');
+                const launchpadInput = document.getElementById('launchpadId');
+
+                let walletConnected = false;
+                let userAddress = '';
+                let userPublicKey = ''; // Для хранения публичного ключа пользователя
+
+                // Подключение к кошельку
+                connectButton.addEventListener('click', async () => {
+                    try {
+                        updateStatus('Connecting to UniSat Wallet...');
+                        const accounts = await unisat.requestAccounts();
+                        console.log('Received accounts:', accounts);
+                        if (accounts && accounts.length > 0) {
+                            userAddress = accounts[0];
+                            walletConnected = true;
+                            updateStatus(`Wallet connected: ${userAddress}`);
+                            // Получение публичного ключа пользователя
+                            try {
+                                if (typeof unisat.getPublicKey === 'function') {
+                                    userPublicKey = await unisat.getPublicKey();
+                                    console.log('User Public Key:', userPublicKey);
+                                } else {
+                                    // Если метод отсутствует, используем заглушку или запросите у пользователя
+                                    userPublicKey = 'placeholder_public_key';
+                                    console.warn('Method getPublicKey not found. Using placeholder.');
+                                }
+                            } catch (pkError) {
+                                console.error('Error obtaining public key:', pkError);
+                                updateStatus(`Error obtaining public key: ${pkError.message}`);
+                            }
+                        } else {
+                            updateStatus('Failed to retrieve wallet address.');
+                        }
+                    } catch (error) {
+                        console.error('Error connecting wallet:', error);
+                        updateStatus(`Error connecting wallet: ${error.message}`);
+                    }
+                });
+
+                // Получение и подписание PSBT
+                getAndSignButton.addEventListener('click', async () => {
+                    if (!walletConnected) {
+                        updateStatus('Please connect UniSat Wallet first.');
+                        return;
+                    }
+
+                    const launchpadId = launchpadInput.value.trim();
+                    if (!launchpadId) {
+                        updateStatus('Please enter launchpadId.');
+                        return;
+                    }
+
+                    try {
+                        updateStatus('Fetching PSBT from server...');
+                        const getPsbtResponse = await fetch(`http://localhost:3000/psbt/v1/launchpads/${launchpadId}/psbt`, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        });
+
+                        if (!getPsbtResponse.ok) {
+                            throw new Error(`Error fetching PSBT: ${getPsbtResponse.status} ${getPsbtResponse.statusText}`);
+                        }
+
+                        const psbtData = await getPsbtResponse.json();
+                        console.log('Received PSBT data:', psbtData);
+                        if (!psbtData.psbt) {
+                            throw new Error('PSBT not found in server response.');
+                        }
+
+                        updateStatus('PSBT fetched. Signing via UniSat Wallet...');
+
+                        // Подписание PSBT через UniSat с указанием toSignInputs и autoFinalized
+                        const signedPsbtHex = await unisat.signPsbt(psbtData.psbt, {
+                            autoFinalized: false, // Автофинализация
+                        });
+                        console.log('Signed PSBT (Hex):', signedPsbtHex);
+
+                        if (!signedPsbtHex) {
+                            throw new Error('PSBT signing failed.');
+                        }
+
+                        // Конвертация подписанного PSBT из Hex в Base64
+                        let signedPsbtBase64;
+                        try {
+                            signedPsbtBase64 = hexToBase64(signedPsbtHex);
+                            console.log('Signed PSBT (Base64):', signedPsbtBase64);
+                        } catch (conversionError) {
+                            throw new Error(`Error converting PSBT to Base64: ${conversionError.message}`);
+                        }
+
+                        updateStatus('PSBT signed. Sending signed PSBT to server...');
+
+                        // Отправка подписанного PSBT на сервер
+                        const postResponse = await fetch('http://localhost:3000/psbt/v1/launchpads/save', {
+                            method: 'POST',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                launchpadId: launchpadId,
+                                signedListingPSBT: signedPsbtBase64
+                            })
+                        });
+
+                        if (!postResponse.ok) {
+                            throw new Error(`Error sending signed PSBT: ${postResponse.status} ${postResponse.statusText}`);
+                        }
+
+                        const postResult = await postResponse.json();
+                        console.log('Server response after sending PSBT:', postResult);
+                        updateStatus(`Successfully sent to server. Server response: ${JSON.stringify(postResult)}`);
+
+                    } catch (error) {
+                        console.error('Error:', error);
+                        updateStatus(`Error: ${error.message}`);
+                    }
+                });
+
+                // Логика для кнопки Mint
+                mintButton.addEventListener('click', async () => {
+                    if (!walletConnected) {
+                        updateStatus('Please connect UniSat Wallet first.');
+                        return;
+                    }
+
+                    const launchpadId = launchpadInput.value.trim();
+                    if (!launchpadId) {
+                        updateStatus('Please enter launchpadId.');
+                        return;
+                    }
+
+                    try {
+                        updateStatus('Starting mint process...');
+
+                        // Шаг 1: Подтверждение наличия padding outputs
+                        updateStatus('Confirming padding outputs...');
+                        const confirmResponse = await fetch('http://localhost:3000/psbt/v1/launchpads/confirm-padding-outputs', {
+                            method: 'POST',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                address: userAddress
+                            })
+                        });
+
+                        if (!confirmResponse.ok) {
+                            throw new Error(`Error confirming padding outputs: ${confirmResponse.status} ${confirmResponse.statusText}`);
+                        }
+
+                        const confirmResult = await confirmResponse.json();
+                        console.log('Confirm Padding Outputs Response:', confirmResult);
+
+                        if (confirmResult.paddingOutputsExist) {
+                            // Если padding outputs существуют, переходим к покупке NFT
+                            updateStatus('Padding outputs exist. Proceeding to buy NFT...');
+                            await buyNFT(launchpadId, userAddress, userPublicKey, unisat);
+                        } else {
+                            // Если padding outputs не существуют, настраиваем их
+                            updateStatus('Padding outputs do not exist. Setting up padding outputs...');
+                            await setupPaddingOutputs(launchpadId, userAddress, userPublicKey, unisat);
+                            // После настройки padding outputs, переходим к покупке NFT
+                            await buyNFT(launchpadId, userAddress, userPublicKey, unisat);
+                        }
+
+                        updateStatus('Mint process completed successfully.');
+
+                    } catch (error) {
+                        console.error('Mint Error:', error);
+                        updateStatus(`Mint Error: ${error.message}`);
+                    }
+                });
+
+                /**
+                 * Функция для настройки padding outputs
+                 */
+                async function setupPaddingOutputs(launchpadId, address, publicKey, unisat) {
+                    try {
+                        const feeRateTier = "standard"; // Пример значения
+                        const numOfOutPuts = 5;
+
+                        updateStatus('Setting up padding outputs...');
+                        const setupResponse = await fetch('http://localhost:3000/psbt/v1/launchpads/setup-padding-outputs', {
+                            method: 'POST',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                address: address,
+                                feeRateTier: feeRateTier,
+                                numOfOutPuts: numOfOutPuts,
+                                publicKey: publicKey
+                            })
+                        });
+
+                        if (!setupResponse.ok) {
+                            throw new Error(`Error setting up padding outputs: ${setupResponse.status} ${setupResponse.statusText}`);
+                        }
+
+                        const setupResult = await setupResponse.json();
+                        console.log('Setup Padding Outputs Response:', setupResult);
+
+                        if (!setupResult.psbt) {
+                            throw new Error('PSBT not found in setup-padding-outputs response.');
+                        }
+
+                        if (!setupResult.buyerInputIndices || setupResult.buyerInputIndices.length === 0) {
+                            throw new Error('buyerInputIndices not found in setup-padding-outputs response.');
+                        }
+
+                        // Формирование toSignInputs на основе buyerInputIndices
+                        const toSignInputs = setupResult.buyerInputIndices.map(index => ({
+                            index: index,
+                            address: address
+                        }));
+
+                        // Подписание PSBT через UniSat с указанием toSignInputs и autoFinalized
+                        const signedPsbtHex = await unisat.signPsbt(setupResult.psbt, {
+                            autoFinalized: true, // Автофинализация
+                            toSignInputs: toSignInputs
+                        });
+                        console.log('Signed Setup PSBT (Hex):', signedPsbtHex);
+
+                        if (!signedPsbtHex) {
+                            throw new Error('PSBT signing failed.');
+                        }
+
+                        // Пуш подписанной PSBT в блокчейн через UniSat
+                        updateStatus('Pushing signed padding PSBT to blockchain...');
+                        const txid = await unisat.pushPsbt(signedPsbtHex);
+                        console.log('Transaction ID:', txid);
+
+                        if (!txid) {
+                            throw new Error('Pushing PSBT to blockchain failed.');
+                        }
+
+                        updateStatus(`Padding transaction pushed successfully. TXID: ${txid}`);
+
+                    } catch (error) {
+                        throw new Error(`Setup Padding Outputs Error: ${error.message}`);
+                    }
+                }
+                /**
+                 * Функция для покупки NFT
+                 */
+                async function buyNFT(launchpadId, address, publicKey, unisat) {
+                    try {
+                        updateStatus('Initiating buy NFT process...');
+                        // Здесь предполагается, что buyerPaymentAddress и buyerPaymentPublicKey известны или могут быть получены
+                        const buyerPaymentAddress = address; // Пример значения
+                        const buyerPaymentPublicKey = publicKey; // Используем публичный ключ пользователя
+
+                        const buyNftPayload = {
+                            buyerOrdinalAddress: address,
+                            buyerPaymentAddress: buyerPaymentAddress,
+                            buyerPaymentPublicKey: buyerPaymentPublicKey,
+                            launchpadId: launchpadId
+                        };
+
+                        const buyResponse = await fetch('http://localhost:3000/psbt/v1/transactions/buy-nft', {
+                            method: 'POST',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(buyNftPayload)
+                        });
+
+                        if (!buyResponse.ok) {
+                            throw new Error(`Error buying NFT: ${buyResponse.status} ${buyResponse.statusText}`);
+                        }
+
+                        const buyResult = await buyResponse.json();
+                        console.log('Buy NFT Response:', buyResult);
+
+                        if (!buyResult.psbt || !buyResult.buyerInputIndices) {
+                            throw new Error('Invalid buy-nft response.');
+                        }
+
+                        // Формирование toSignInputs на основе buyerInputIndices
+                        const toSignInputs = buyResult.buyerInputIndices.map(index => ({
+                            index: index,
+                            address: address, // Предполагается, что все индексы связаны с одним адресом
+                            // Если у вас есть публичные ключи для каждого индекса, можно добавить их здесь
+                            // Например:
+                            // publicKey: userPublicKey
+                        }));
+
+                        // Подписание PSBT с указанием toSignInputs
+                        updateStatus('Signing buy NFT PSBT...');
+                        const signedBuyPsbtHex = await unisat.signPsbt(buyResult.psbt, {
+                            autoFinalized: false, // Автофинализация
+                            toSignInputs: toSignInputs
+                        });
+
+                        if (!signedBuyPsbtHex) {
+                            throw new Error('Buy NFT PSBT signing failed.');
+                        }
+
+                        const signedBuyPsbtBase64 = hexToBase64(signedBuyPsbtHex);
+                        console.log('Signed Buy NFT PSBT (Base64):', signedBuyPsbtBase64);
+
+                        // Отправка подписанного PSBT для покупки NFT
+                        updateStatus('Sending signed buy NFT PSBT to server...');
+                        const submitOfferResponse = await fetch('http://localhost:3000/psbt/v1/transactions/submit-launch-offer', {
+                            method: 'POST',
+                            headers: {
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                launchpadId: launchpadId,
+                                ordinalId: buyResult.ordinalId, // Предполагается, что ordinalId приходит в ответе
+                                signedBuyerPSBTBase64: signedBuyPsbtBase64
+                            })
+                        });
+
+                        if (!submitOfferResponse.ok) {
+                            throw new Error(`Error submitting launch offer: ${submitOfferResponse.status} ${submitOfferResponse.statusText}`);
+                        }
+
+                        const submitOfferResult = await submitOfferResponse.json();
+                        console.log('Submit Launch Offer Response:', submitOfferResult);
+
+                        updateStatus(`Mint successful. Transaction details: ${JSON.stringify(submitOfferResult)}`);
+
+                    } catch (error) {
+                        throw new Error(`Buy NFT Error: ${error.message}`);
+                    }
+                }
+
+            })
+            .catch(error => {
+                console.error(error);
+                updateStatus(`Error: ${error.message}`);
+                document.getElementById('connectWallet').disabled = true;
+                document.getElementById('getAndSignPsbt').disabled = true;
+                document.getElementById('mintButton').disabled = true; // Отключаем кнопку Mint при ошибке
+            });
+    });
+</script>
+</body>
+</html>
