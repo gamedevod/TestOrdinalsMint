@@ -206,7 +206,7 @@ function App() {
             setStatus(`Initiating Minting via ${walletType}...`);
 
             // Шаг 1: Инициирование Minting с необходимыми полями
-            const initiateResponse = await fetch(`${API_BASE_URL}/psbt/v1/transactions/minting`, {
+            const initiateResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/init`, {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
@@ -269,7 +269,7 @@ function App() {
 
             // Шаг 2: Завершение Minting
             setStatus(`Completing Minting via ${walletType}...`);
-            const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/transactions/complete`, {
+            const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/complete`, {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
