@@ -1,6 +1,7 @@
 // src/App.js
 import React, { useState } from 'react';
 import { request, RpcErrorCode, AddressPurpose } from '@sats-connect/core';
+import { Buffer } from 'buffer';
 import * as bitcoin from 'bitcoinjs-lib';
 
 function App() {
@@ -177,8 +178,26 @@ function App() {
                 }
                 buyerAddress = xverseAddresses.find(addr => addr.purpose === AddressPurpose.Payment)?.address || '';
                 buyerPublicKey = xverseAddresses.find(addr => addr.purpose === AddressPurpose.Payment)?.publicKey || '';
-                signPsbtFunction = window.xverse.signPsbt;
                 buyerReceiverAddress = xverseAddresses.find(addr => addr.purpose === AddressPurpose.Ordinals)?.address || buyerAddress;
+
+                // Определение функции подписания PSBT для Xverse
+                signPsbtFunction = async (psbtBase64, options) => {
+                    try {
+                        console.log('Подписание PSBT с параметрами:', {
+                            psbt: psbtBase64,
+                            ...options,
+                        });
+                        const signedPsbt = await request('signPsbt', {
+                            psbt: psbtBase64,
+                            ...options,
+                        });
+                        console.log('Полученная подписанная PSBT:', signedPsbt);
+                        return signedPsbt;
+                    } catch (error) {
+                        console.error('Ошибка при подписании PSBT:', error);
+                        throw new Error(`Xverse signing failed: ${error.message}`);
+                    }
+                };
                 break;
             case 'UniSat':
                 if (!uniSatConnected) {
@@ -236,7 +255,7 @@ function App() {
             const psbtHex = initiateData.psbtHex;
             const buyerInputIndices = initiateData.buyerInputIndices;
             const receivedInscriptionID = initiateData.inscriptionID;
-            const receivedTransactionID = initiateData.transactionId; // New line
+            const receivedTransactionID = initiateData.transactionId; // Новая строка
             console.log(`${walletType} Initiate Minting Response:`, initiateData);
 
             if (!psbtHex) {
@@ -256,47 +275,133 @@ function App() {
             if (toSignInputs.some(input => input.index === 0)) {
                 throw new Error("Invalid input index 0 found in buyerInputIndices.");
             }
-            const signedPsbtHex = await signPsbtFunction(psbtHex, {
-                autoFinalized: false, // Автоматическая финализация
-                toSignInputs: toSignInputs
-            });
+            console.log('Индексы для подписи:', toSignInputs);
 
-            if (!signedPsbtHex) {
-                throw new Error(`Failed to sign PSBT via ${walletType}.`);
+            let signedPsbtResponse;
+
+            if (walletType === 'Xverse') {
+                // Преобразование PSBT из HEX в Base64
+                const psbtBuffer = Buffer.from(psbtHex, 'hex');
+                const psbtBase64 = psbtBuffer.toString('base64');
+
+                // Преобразование массива toSignInputs в объект signInputs
+                const signInputs = toSignInputs.reduce((acc, { address, index }) => {
+                    if (!acc[address]) {
+                        acc[address] = [];
+                    }
+                    acc[address].push(index);
+                    return acc;
+                }, {});
+                console.log('Объект signInputs для Xverse:', signInputs);
+
+                signedPsbtResponse = await signPsbtFunction(psbtBase64, {
+                    signInputs: signInputs,
+                    broadcast: false // Установите в true, если хотите автоматически транслировать
+                });
+            } else {
+                // Для других кошельков используем их собственные методы подписания
+                signedPsbtResponse = await signPsbtFunction(psbtHex, {
+                    autoFinalized: false, // Автоматическая финализация
+                    toSignInputs: buyerInputIndices.map(index => ({
+                        index: index,
+                        address: buyerAddress
+                    }))
+                });
             }
 
-            console.log(`${walletType} Signed PSBT (Hex):`, signedPsbtHex);
-
-            // Шаг 2: Завершение Minting
-            setStatus(`Completing Minting via ${walletType}...`);
-            const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/complete`, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    transactionId: receivedTransactionID, // Include Transaction ID
-                    psbtHex: signedPsbtHex // Отправка PSBT Hex строки
-                })
-            });
-
-            if (!completeResponse.ok) {
-                let errorMsg = `Error completing Minting: ${completeResponse.status} ${completeResponse.statusText}`;
-                try {
-                    const errorData = await completeResponse.json();
-                    errorMsg += ` - ${errorData.message}`;
-                } catch (e) {
-                    // Не удалось разобрать ошибку
+            // Обработка ответа от подписания
+            if (walletType === 'Xverse') {
+                if (signedPsbtResponse.status !== "success") {
+                    if (signedPsbtResponse.error.code === RpcErrorCode.USER_REJECTION) {
+                        throw new Error("User rejected the signing request.");
+                    } else {
+                        throw new Error(`Signing failed: ${signedPsbtResponse.error.message}`);
+                    }
                 }
-                throw new Error(errorMsg);
+
+                const signedPsbtBase64 = signedPsbtResponse.psbt;
+                const txid = signedPsbtResponse.txid;
+
+                console.log(`${walletType} Signed PSBT (Base64):`, signedPsbtBase64);
+                console.log(`${walletType} TXID:`, txid);
+
+                // Если вы установили broadcast: false, необходимо самостоятельно транслировать PSBT
+                if (!txid) {
+                    // Раскодируйте PSBT из Base64 обратно в Hex для передачи на сервер
+                    const signedPsbtBuffer = Buffer.from(signedPsbtBase64, 'base64');
+                    const signedPsbtHex = signedPsbtBuffer.toString('hex');
+
+                    // Шаг 2: Завершение Minting
+                    setStatus(`Completing Minting via ${walletType}...`);
+                    const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/complete`, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            transactionId: receivedTransactionID, // Включаем Transaction ID
+                            psbtHex: signedPsbtHex // Отправка PSBT Hex строки
+                        })
+                    });
+
+                    if (!completeResponse.ok) {
+                        let errorMsg = `Error completing Minting: ${completeResponse.status} ${completeResponse.statusText}`;
+                        try {
+                            const errorData = await completeResponse.json();
+                            errorMsg += ` - ${errorData.message}`;
+                        } catch (e) {
+                            // Не удалось разобрать ошибку
+                        }
+                        throw new Error(errorMsg);
+                    }
+
+                    const completeData = await completeResponse.json();
+                    console.log(`${walletType} Complete Minting Response:`, completeData);
+                    setStatus(`Minting successfully completed via ${walletType}. TXID: ${completeData.transactionID}`);
+                } else {
+                    // Если транзакция была автоматически транслирована
+                    setStatus(`Minting successfully completed via ${walletType}. TXID: ${txid}`);
+                }
+            } else {
+                // Обработка подписанной PSBT для других кошельков
+                if (!signedPsbtResponse) {
+                    throw new Error(`Failed to sign PSBT via ${walletType}.`);
+                }
+
+                console.log(`${walletType} Signed PSBT:`, signedPsbtResponse);
+
+                // Предполагается, что для других кошельков PSBT уже подписана и готова к завершению
+                setStatus(`Completing Minting via ${walletType}...`);
+                const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/complete`, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        transactionId: receivedTransactionID, // Включаем Transaction ID
+                        psbtHex: signedPsbtResponse.psbtHex // Предполагается, что другие кошельки возвращают psbtHex
+                    })
+                });
+
+                if (!completeResponse.ok) {
+                    let errorMsg = `Error completing Minting: ${completeResponse.status} ${completeResponse.statusText}`;
+                    try {
+                        const errorData = await completeResponse.json();
+                        errorMsg += ` - ${errorData.message}`;
+                    } catch (e) {
+                        // Не удалось разобрать ошибку
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                const completeData = await completeResponse.json();
+                console.log(`${walletType} Complete Minting Response:`, completeData);
+                setStatus(`Minting successfully completed via ${walletType}. TXID: ${completeData.transactionID}`);
             }
 
-            const completeData = await completeResponse.json();
-            console.log(`${walletType} Complete Minting Response:`, completeData);
-            setStatus(`Minting successfully completed via ${walletType}. TXID: ${completeData.transactionID}`);
-
-            // Сброс inscriptionID после успешной транзакции
+            // Сброс inscriptionID и transactionId после успешной транзакции
             setInscriptionID('');
             setTransactionId('');
         } catch (error) {
@@ -408,6 +513,7 @@ function App() {
             </div>
         </div>
     );
+
 }
 
 export default App;

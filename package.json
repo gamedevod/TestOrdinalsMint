@@ -7,6 +7,7 @@
     "@sats-connect/ui": "^0.0.7",
     "@scure/btc-signer": "^1.4.0",
     "bitcoinjs-lib": "^7.0.0-rc.0",
+    "buffer": "^6.0.3",
     "cross-env": "^7.0.3",
     "jsontokens": "^4.0.1",
     "react": "^17.0.2",
