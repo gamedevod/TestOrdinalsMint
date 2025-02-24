@@ -1,8 +1,8 @@
-// src/App.js
 import React, { useState } from 'react';
 import { request, RpcErrorCode, AddressPurpose } from '@sats-connect/core';
 import { Buffer } from 'buffer';
-import * as bitcoin from 'bitcoinjs-lib';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 
 function App() {
     // ----------------- Wallet States -----------------
@@ -36,12 +36,9 @@ function App() {
 
     // ----------------- View/Edit Collection States -----------------
     const [viewCollectionID, setViewCollectionID] = useState('');
-    // viewCollection хранит всю информацию, включая launchpad.phases
     const [viewCollection, setViewCollection] = useState(null);
-    // Для редактирования отдельной фазы
     const [editPhaseData, setEditPhaseData] = useState(null);
     const [editPhaseCollectionID, setEditPhaseCollectionID] = useState('');
-    // Для добавления адресной аллокации к фазе
     const [allocationPhaseId, setAllocationPhaseId] = useState('');
     const [allocationAddress, setAllocationAddress] = useState('');
     const [allocationMaxMintCount, setAllocationMaxMintCount] = useState('');
@@ -51,6 +48,30 @@ function App() {
 
     // ----------------- Process Inscriptions State -----------------
     const [processCollectionID, setProcessCollectionID] = useState('');
+
+    // ----------------- Direct Inscribed Collection States -----------------
+    const [directTitle, setDirectTitle] = useState('');
+    const [directSynopsis, setDirectSynopsis] = useState('');
+    const [directCover, setDirectCover] = useState('');
+    const [directCreator, setDirectCreator] = useState('');
+    const [directSupply, setDirectSupply] = useState(777);
+    const [directWalletAddress, setDirectWalletAddress] = useState('');
+    const [directNetworkType, setDirectNetworkType] = useState('mainnet');
+    const [directGenre, setDirectGenre] = useState([]);
+    const [directItems, setDirectItems] = useState([{
+        title: '',
+        files: [{ type: 'pdf', inscriptionId: '' }, { type: 'html', inscriptionId: '' }],
+        supply: 0,
+        keepSelf: 0,
+    }]);
+    const [directPhases, setDirectPhases] = useState([{
+        displayName: '',
+        startDate: new Date('2025-02-25T11:00:00-05:00'),
+        endDate: new Date('2026-02-25T11:00:00-05:00'),
+        maxMintPerAddress: 100000,
+        price: 0,
+        isPublic: true,
+    }]);
 
     // ----------------- Active Tab -----------------
     const [activeTab, setActiveTab] = useState('minting');
@@ -71,7 +92,7 @@ function App() {
 
     const tabButtonStyle = (tab) => ({
         ...buttonStyle,
-        backgroundColor: activeTab === tab ? '#2E7D32' : '#4CAF50'
+        backgroundColor: activeTab === tab ? '#2e7d32' : '#4CAF50'
     });
 
     // ----------------- Wallet Functions -----------------
@@ -198,7 +219,7 @@ function App() {
         }
         try {
             setStatus(`Initiating Minting via ${walletType}...`);
-            const initiateResponse = await fetch(`${API_BASE_URL}/mint/init`, {
+            const initiateResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/init`, {
                 method: 'POST',
                 headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -251,7 +272,7 @@ function App() {
                     const signedPsbtBuffer = Buffer.from(signedPsbtBase64, 'base64');
                     const signedPsbtHex = signedPsbtBuffer.toString('hex');
                     setStatus(`Completing Minting via ${walletType}...`);
-                    const completeResponse = await fetch(`${API_BASE_URL}/mint/complete`, {
+                    const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/complete`, {
                         method: 'POST',
                         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
                         body: JSON.stringify({ transactionId: receivedTransactionID, psbtHex: signedPsbtHex }),
@@ -269,7 +290,7 @@ function App() {
             } else {
                 if (!signedPsbtResponse) throw new Error(`Failed to sign PSBT via ${walletType}.`);
                 setStatus(`Completing Minting via ${walletType}...`);
-                const completeResponse = await fetch(`${API_BASE_URL}/mint/complete`, {
+                const completeResponse = await fetch(`${API_BASE_URL}/psbt/v1/mint/complete`, {
                     method: 'POST',
                     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
                     body: JSON.stringify({ transactionId: receivedTransactionID, psbtHex: signedPsbtResponse }),
@@ -290,12 +311,11 @@ function App() {
     };
 
     // ----------------- Collection Management Functions -----------------
-    // Add Phase (for creating a collection)
     const addPhase = () => {
         setPhases([...phases, {
             displayName: '',
-            startTime: '',
-            endTime: '',
+            startDate: new Date(),
+            endDate: new Date(),
             maxMintPerAddress: '',
             price: '',
             isPublic: false,
@@ -303,26 +323,24 @@ function App() {
         }]);
     };
 
-    // Update field of a phase (for creating a collection)
     const handlePhaseChange = (index, field, value) => {
         const updatedPhases = [...phases];
         updatedPhases[index][field] = value;
         setPhases(updatedPhases);
     };
 
-    // Create Collection
     const handleCreateCollection = async () => {
         const ordinalsArray = createOrdinals.split(',').map((s) => s.trim());
         const phasesPayload = phases.map((phase) => {
             let parsedAllocations = [];
             if (!phase.isPublic && phase.addressAllocations.trim() !== '') {
                 try { parsedAllocations = JSON.parse(phase.addressAllocations); }
-                catch (err) { alert(`Ошибка парсинга адресных аллокаций для фазы "${phase.displayName}".`); throw err; }
+                catch (err) { alert(`Error parsing address allocations for phase "${phase.displayName}".`); throw err; }
             }
             return {
                 displayName: phase.displayName,
-                startTime: Number(phase.startTime),
-                endTime: Number(phase.endTime),
+                startTime: Math.floor(phase.startDate.getTime() / 1000),
+                endTime: Math.floor(phase.endDate.getTime() / 1000),
                 maxMintPerAddress: Number(phase.maxMintPerAddress),
                 price: Number(phase.price),
                 isPublic: phase.isPublic,
@@ -340,42 +358,40 @@ function App() {
             phases: phasesPayload,
         };
         try {
-            setStatus("Создание коллекции...");
-            const response = await fetch(`${API_BASE_URL}/collections/create`, {
+            setStatus("Creating collection...");
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/create`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка создания коллекции.");
+                throw new Error(errorData.message || "Failed to create collection.");
             }
-            setStatus("Коллекция успешно создана.");
+            setStatus("Collection created successfully.");
             setCreateName(''); setCreateDescription('');
             setCreateTotalSupply(''); setCreateCoverImage('');
             setCreateCreator(''); setCreateWalletAddress('');
             setCreateOrdinals(''); setPhases([]);
         } catch (error) {
-            setStatus(`Ошибка создания коллекции: ${error.message}`);
+            setStatus(`Error creating collection: ${error.message}`);
         }
     };
 
-    // ----------------- View/Edit Collection Functions -----------------
-    // Load full Collection Info (GET /collections/{id}/info)
     const handleLoadCollectionInfo = async () => {
         if (!viewCollectionID.trim()) {
-            alert("Введите ID коллекции для загрузки информации.");
+            alert("Please enter a Collection ID to load information.");
             return;
         }
         try {
-            setStatus("Загрузка информации о коллекции...");
-            const response = await fetch(`${API_BASE_URL}/collections/${viewCollectionID}/info`, {
+            setStatus("Loading collection info...");
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/${viewCollectionID}/info`, {
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' }
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка загрузки информации о коллекции.");
+                throw new Error(errorData.message || "Failed to load collection info.");
             }
             const data = await response.json();
             setViewCollection(data);
@@ -389,112 +405,109 @@ function App() {
                 isOnBanner: data.isOnBanner,
                 genre: data.genre ? data.genre.join(', ') : ''
             });
-            setStatus("Информация о коллекции загружена.");
+            setStatus("Collection info loaded successfully.");
         } catch (error) {
-            setStatus(`Ошибка загрузки информации о коллекции: ${error.message}`);
+            setStatus(`Error loading collection info: ${error.message}`);
         }
     };
 
-    // Delete Phase
     const handleDeletePhase = async (phaseId) => {
         if (!viewCollectionID.trim()) {
-            alert("Сначала загрузите коллекцию.");
+            alert("Please load a collection first.");
             return;
         }
-        if (!window.confirm("Вы уверены, что хотите удалить эту фазу?")) return;
+        if (!window.confirm("Are you sure you want to delete this phase?")) return;
         try {
-            setStatus("Удаление фазы...");
-            const response = await fetch(`${API_BASE_URL}/collections/${viewCollectionID}/phase/${phaseId}`, {
+            setStatus("Deleting phase...");
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/${viewCollectionID}/phase/${phaseId}`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' }
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка удаления фазы.");
+                throw new Error(errorData.message || "Failed to delete phase.");
             }
-            setStatus("Фаза удалена.");
+            setStatus("Phase deleted successfully.");
             handleLoadCollectionInfo();
         } catch (error) {
-            setStatus(`Ошибка удаления фазы: ${error.message}`);
+            setStatus(`Error deleting phase: ${error.message}`);
         }
     };
 
-    // Edit Phase – load phase data into edit form
     const handleEditPhase = (phase) => {
-        const startTimestamp = phase.startTime ? Math.floor(new Date(phase.startTime).getTime() / 1000) : '';
-        const endTimestamp = phase.endTime ? Math.floor(new Date(phase.endTime).getTime() / 1000) : '';
         setEditPhaseData({
             ...phase,
-            startTime: startTimestamp,
-            endTime: endTimestamp,
+            startDate: new Date(phase.startTime),
+            endDate: new Date(phase.endTime),
             addressAllocations: phase.addressAllocations ? JSON.stringify(phase.addressAllocations, null, 2) : ''
         });
         setEditPhaseCollectionID(viewCollectionID);
     };
 
-    // Update Phase
     const handleUpdatePhase = async () => {
         if (!editPhaseData || !editPhaseData.id) {
-            alert("Нет данных для обновления.");
+            alert("No data to update.");
             return;
         }
+        const payload = {
+            ...editPhaseData,
+            startTime: Math.floor(editPhaseData.startDate.getTime() / 1000),
+            endTime: Math.floor(editPhaseData.endDate.getTime() / 1000),
+        };
         try {
-            setStatus("Обновление фазы...");
-            const response = await fetch(`${API_BASE_URL}/collections/${editPhaseCollectionID}/phase/${editPhaseData.id}/update`, {
+            setStatus("Updating phase...");
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/${editPhaseCollectionID}/phase/${editPhaseData.id}/update`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(editPhaseData)
+                body: JSON.stringify(payload)
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка обновления фазы.");
+                throw new Error(errorData.message || "Failed to update phase.");
             }
-            setStatus("Фаза успешно обновлена.");
+            setStatus("Phase updated successfully.");
             setEditPhaseData(null);
             handleLoadCollectionInfo();
         } catch (error) {
-            setStatus(`Ошибка обновления фазы: ${error.message}`);
+            setStatus(`Error updating phase: ${error.message}`);
         }
     };
 
-    // Update field in edit phase form
     const handleEditPhaseChange = (field, value) => {
         setEditPhaseData({ ...editPhaseData, [field]: value });
     };
 
-    // Add Address Allocation to Phase
     const handleUpdateAllocation = async () => {
         if (!viewCollectionID.trim() || !allocationPhaseId.trim()) {
-            alert("Введите ID коллекции и фазы для обновления аллокации.");
+            alert("Please enter Collection ID and Phase ID to update allocation.");
             return;
         }
         const payload = { address: allocationAddress, maxMintCount: Number(allocationMaxMintCount) };
         try {
-            setStatus("Обновление адресной аллокации...");
-            const response = await fetch(`${API_BASE_URL}/collections/${viewCollectionID}/phase/${allocationPhaseId}/allocation`, {
+            setStatus("Updating address allocation...");
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/${viewCollectionID}/phase/${allocationPhaseId}/allocation`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка обновления аллокации.");
+                throw new Error(errorData.message || "Failed to update allocation.");
             }
-            setStatus("Аллокация успешно обновлена.");
+            setStatus("Allocation updated successfully.");
             handleLoadCollectionInfo();
         } catch (error) {
-            setStatus(`Ошибка обновления аллокации: ${error.message}`);
+            setStatus(`Error updating allocation: ${error.message}`);
         }
     };
 
-    // Update Collection Info
     const handleUpdateCollectionInfo = async () => {
         if (!viewCollectionID.trim()) {
-            alert("Введите ID коллекции для обновления информации.");
+            alert("Please enter Collection ID to update information.");
             return;
         }
         try {
-            setStatus("Обновление информации о коллекции...");
+            setStatus("Updating collection info...");
             const payload = {
                 title: editCollectionInfo.title,
                 creator: editCollectionInfo.creator,
@@ -505,41 +518,140 @@ function App() {
                 isOnBanner: editCollectionInfo.isOnBanner,
                 genre: editCollectionInfo.genre ? editCollectionInfo.genre.split(',').map(s => s.trim()) : []
             };
-            const response = await fetch(`${API_BASE_URL}/collections/${viewCollectionID}/updateInfo`, {
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/${viewCollectionID}/updateInfo`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка обновления информации о коллекции.");
+                throw new Error(errorData.message || "Failed to update collection info.");
             }
-            setStatus("Информация о коллекции успешно обновлена.");
+            setStatus("Collection info updated successfully.");
             handleLoadCollectionInfo();
         } catch (error) {
-            setStatus(`Ошибка обновления информации о коллекции: ${error.message}`);
+            setStatus(`Error updating collection info: ${error.message}`);
         }
     };
 
-    // Process Inscriptions
     const handleProcessInscriptions = async () => {
         if (!processCollectionID.trim()) {
-            alert("Введите ID коллекции для обработки инскрипций.");
+            alert("Please enter Collection ID to process inscriptions.");
             return;
         }
         try {
-            setStatus("Запуск обработки инскрипций...");
-            const response = await fetch(`${API_BASE_URL}/collections/${processCollectionID}/process-inscriptions`, {
+            setStatus("Starting inscription processing...");
+            const response = await fetch(`${API_BASE_URL}/psbt/v1/collections/${processCollectionID}/process-inscriptions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || "Ошибка обработки инскрипций.");
+                throw new Error(errorData.message || "Failed to process inscriptions.");
             }
-            setStatus("Обработка инскрипций успешно выполнена.");
+            setStatus("Inscriptions processed successfully.");
         } catch (error) {
-            setStatus(`Ошибка обработки инскрипций: ${error.message}`);
+            setStatus(`Error processing inscriptions: ${error.message}`);
+        }
+    };
+
+    // ----------------- Direct Inscribed Collection Functions -----------------
+    const addDirectItem = () => {
+        setDirectItems([...directItems, {
+            title: '',
+            files: [{ type: 'pdf', inscriptionId: '' }, { type: 'html', inscriptionId: '' }],
+            supply: 0,
+            keepSelf: 0,
+        }]);
+    };
+
+    const addFileToDirectItem = (itemIndex) => {
+        const newItems = [...directItems];
+        newItems[itemIndex].files.push({ type: 'pdf', inscriptionId: '' });
+        setDirectItems(newItems);
+    };
+
+    const addDirectPhase = () => {
+        setDirectPhases([...directPhases, {
+            displayName: '',
+            startDate: new Date(),
+            endDate: new Date(),
+            maxMintPerAddress: 100000,
+            price: 0,
+            isPublic: true,
+        }]);
+    };
+
+    const handleDirectPhaseChange = (index, field, value) => {
+        const newPhases = [...directPhases];
+        newPhases[index][field] = value;
+        setDirectPhases(newPhases);
+    };
+
+    const handleCreateDirectInscribed = async (e) => {
+        e.preventDefault();
+        const requestData = {
+            title: directTitle,
+            synopsis: directSynopsis,
+            cover: directCover,
+            creator: directCreator,
+            supply: directSupply,
+            walletAddress: directWalletAddress,
+            networkType: directNetworkType,
+            genre: directGenre,
+            items: directItems.map(item => ({
+                title: item.title,
+                files: item.files.map(file => ({
+                    type: file.type,
+                    inscriptionId: file.inscriptionId,
+                })),
+                supply: item.supply,
+                keepSelf: item.keepSelf,
+            })),
+            phases: directPhases.map(phase => ({
+                displayName: phase.displayName,
+                startDate: phase.startDate.toISOString().slice(0, 16),
+                endDate: phase.endDate.toISOString().slice(0, 16),
+                maxMintPerAddress: phase.maxMintPerAddress,
+                price: phase.price,
+                isPublic: phase.isPublic,
+            })),
+        };
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/resource/create/direct-inscribed`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestData),
+            });
+            if (response.ok) {
+                setStatus('Collection created successfully');
+                setDirectTitle('');
+                setDirectSynopsis('');
+                setDirectCover('');
+                setDirectCreator('');
+                setDirectSupply(777);
+                setDirectWalletAddress('');
+                setDirectNetworkType('mainnet');
+                setDirectGenre([]);
+                setDirectItems([{
+                    title: '',
+                    files: [{ type: 'pdf', inscriptionId: '' }, { type: 'html', inscriptionId: '' }],
+                    supply: 0,
+                    keepSelf: 0,
+                }]);
+                setDirectPhases([{
+                    displayName: '',
+                    startDate: new Date('2025-02-25T11:00:00-05:00'),
+                    endDate: new Date('2026-02-25T11:00:00-05:00'),
+                    maxMintPerAddress: 100000,
+                    price: 0,
+                    isPublic: true,
+                }]);
+            } else {
+                setStatus('Failed to create collection');
+            }
+        } catch (error) {
+            setStatus('Error creating collection: ' + error.message);
         }
     };
 
@@ -547,18 +659,18 @@ function App() {
     return (
         <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
             <h1>PSBT Mint & Collection Manager</h1>
-            {/* Tab Menu */}
             <div style={{ marginBottom: '20px' }}>
                 <button style={tabButtonStyle('minting')} onClick={() => setActiveTab('minting')}>Minting</button>
                 <button style={tabButtonStyle('create')} onClick={() => setActiveTab('create')}>Create Collection</button>
                 <button style={tabButtonStyle('view')} onClick={() => setActiveTab('view')}>View/Edit Collection</button>
                 <button style={tabButtonStyle('process')} onClick={() => setActiveTab('process')}>Process Inscriptions</button>
+                <button style={tabButtonStyle('direct')} onClick={() => setActiveTab('direct')}>Create Direct Inscribed</button>
             </div>
 
             {/* Minting Tab */}
             {activeTab === 'minting' && (
                 <div>
-                    <h2>Minting (Подписание PSBT)</h2>
+                    <h2>Minting (PSBT Signing)</h2>
                     <div style={{ marginBottom: '20px' }}>
                         <label>
                             <strong>Collection ID:</strong>
@@ -593,9 +705,9 @@ function App() {
                         )}
                     </div>
                     <div style={{ marginTop: '20px' }}>
-                        {xverseConnected && <button onClick={() => getAndSignPsbt('Xverse')} style={buttonStyle}>Minting (Xverse)</button>}
-                        {uniSatConnected && <button onClick={() => getAndSignPsbt('UniSat')} style={buttonStyle}>Minting (UniSat)</button>}
-                        {okxConnected && <button onClick={() => getAndSignPsbt('OKX')} style={buttonStyle}>Minting (OKX)</button>}
+                        {xverseConnected && <button onClick={() => getAndSignPsbt('Xverse')} style={buttonStyle}>Mint (Xverse)</button>}
+                        {uniSatConnected && <button onClick={() => getAndSignPsbt('UniSat')} style={buttonStyle}>Mint (UniSat)</button>}
+                        {okxConnected && <button onClick={() => getAndSignPsbt('OKX')} style={buttonStyle}>Mint (OKX)</button>}
                     </div>
                     <div style={{ marginTop: '20px', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}>
                         <strong>Inscription ID:</strong> {inscriptionID || 'No inscription selected'}
@@ -645,7 +757,6 @@ function App() {
                             <input type="text" value={createOrdinals} onChange={(e) => setCreateOrdinals(e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
                         </label>
                     </div>
-                    {/* Dynamic Phases */}
                     <div style={{ marginTop: '20px' }}>
                         <h3>Phases</h3>
                         {phases.map((phase, index) => (
@@ -659,14 +770,14 @@ function App() {
                                 </div>
                                 <div style={{ marginBottom: '8px' }}>
                                     <label>
-                                        Start Time (Unix Timestamp):
-                                        <input type="number" value={phase.startTime} onChange={(e) => handlePhaseChange(index, 'startTime', e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '150px' }} />
+                                        Start Date:
+                                        <DatePicker selected={phase.startDate} onChange={(date) => handlePhaseChange(index, 'startDate', date)} showTimeSelect dateFormat="yyyy-MM-dd HH:mm" style={{ marginLeft: '10px' }} />
                                     </label>
                                 </div>
                                 <div style={{ marginBottom: '8px' }}>
                                     <label>
-                                        End Time (Unix Timestamp):
-                                        <input type="number" value={phase.endTime} onChange={(e) => handlePhaseChange(index, 'endTime', e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '150px' }} />
+                                        End Date:
+                                        <DatePicker selected={phase.endDate} onChange={(date) => handlePhaseChange(index, 'endDate', date)} showTimeSelect dateFormat="yyyy-MM-dd HH:mm" style={{ marginLeft: '10px' }} />
                                     </label>
                                 </div>
                                 <div style={{ marginBottom: '8px' }}>
@@ -729,7 +840,6 @@ function App() {
                             <p><strong>Is On Banner:</strong> {viewCollection.isOnBanner ? 'Yes' : 'No'}</p>
                             <p><strong>Genre:</strong> {viewCollection.genre ? viewCollection.genre.join(', ') : ''}</p>
                             <h4>Phases</h4>
-                            {/* Здесь берем фазы из viewCollection.launchpad.phases */}
                             {viewCollection.launchpad && viewCollection.launchpad.phases && viewCollection.launchpad.phases.length > 0 ? (
                                 viewCollection.launchpad.phases.map((phase) => (
                                     <div key={phase.id} style={{ padding: '10px', border: '1px solid #ccc', marginBottom: '10px' }}>
@@ -752,8 +862,6 @@ function App() {
                             )}
                         </div>
                     )}
-
-                    {/* Edit Collection Info Form */}
                     {viewCollection && (
                         <div style={{ marginTop: '30px', padding: '15px', border: '1px solid #aaa', borderRadius: '4px' }}>
                             <h3>Edit Collection Info</h3>
@@ -808,8 +916,6 @@ function App() {
                             <button onClick={handleUpdateCollectionInfo} style={buttonStyle}>Update Collection Info</button>
                         </div>
                     )}
-
-                    {/* Edit Phase Form */}
                     {editPhaseData && (
                         <div style={{ marginTop: '30px', padding: '15px', border: '1px solid #aaa', borderRadius: '4px' }}>
                             <h3>Edit Phase</h3>
@@ -822,14 +928,14 @@ function App() {
                             </div>
                             <div style={{ marginBottom: '10px' }}>
                                 <label>
-                                    Start Time (Unix Timestamp):
-                                    <input type="number" value={editPhaseData.startTime || ''} onChange={(e) => handleEditPhaseChange('startTime', Number(e.target.value))} style={{ marginLeft: '10px', padding: '5px', width: '150px' }} />
+                                    Start Date:
+                                    <DatePicker selected={editPhaseData.startDate} onChange={(date) => handleEditPhaseChange('startDate', date)} showTimeSelect dateFormat="yyyy-MM-dd HH:mm" style={{ marginLeft: '10px' }} />
                                 </label>
                             </div>
                             <div style={{ marginBottom: '10px' }}>
                                 <label>
-                                    End Time (Unix Timestamp):
-                                    <input type="number" value={editPhaseData.endTime || ''} onChange={(e) => handleEditPhaseChange('endTime', Number(e.target.value))} style={{ marginLeft: '10px', padding: '5px', width: '150px' }} />
+                                    End Date:
+                                    <DatePicker selected={editPhaseData.endDate} onChange={(date) => handleEditPhaseChange('endDate', date)} showTimeSelect dateFormat="yyyy-MM-dd HH:mm" style={{ marginLeft: '10px' }} />
                                 </label>
                             </div>
                             <div style={{ marginBottom: '10px' }}>
@@ -862,8 +968,6 @@ function App() {
                             <button onClick={() => setEditPhaseData(null)} style={{ ...buttonStyle, backgroundColor: '#757575' }}>Cancel</button>
                         </div>
                     )}
-
-                    {/* Add/Update Address Allocation Form */}
                     <div style={{ marginTop: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '4px' }}>
                         <h3>Update Address Allocation</h3>
                         <div style={{ marginBottom: '10px' }}>
@@ -900,6 +1004,175 @@ function App() {
                         </label>
                     </div>
                     <button onClick={handleProcessInscriptions} style={buttonStyle}>Process Inscriptions</button>
+                </div>
+            )}
+
+            {/* Create Direct Inscribed Collection Tab */}
+            {activeTab === 'direct' && (
+                <div>
+                    <h2>Create Direct Inscribed Collection</h2>
+                    <form onSubmit={handleCreateDirectInscribed}>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Title:</strong>
+                                <input type="text" value={directTitle} onChange={(e) => setDirectTitle(e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Synopsis:</strong>
+                                <textarea value={directSynopsis} onChange={(e) => setDirectSynopsis(e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '300px', height: '60px' }} />
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Cover:</strong>
+                                <input type="text" value={directCover} onChange={(e) => setDirectCover(e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Creator:</strong>
+                                <input type="text" value={directCreator} onChange={(e) => setDirectCreator(e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Total Supply:</strong>
+                                <input type="number" value={directSupply} onChange={(e) => setDirectSupply(Number(e.target.value))} style={{ marginLeft: '10px', padding: '5px', width: '100px' }} />
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Wallet Address:</strong>
+                                <input type="text" value={directWalletAddress} onChange={(e) => setDirectWalletAddress(e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Network Type:</strong>
+                                <select value={directNetworkType} onChange={(e) => setDirectNetworkType(e.target.value)} style={{ marginLeft: '10px', padding: '5px' }}>
+                                    <option value="mainnet">Mainnet</option>
+                                    <option value="testnet">Testnet</option>
+                                </select>
+                            </label>
+                        </div>
+                        <div style={{ marginBottom: '10px' }}>
+                            <label><strong>Genres (comma separated):</strong>
+                                <input type="text" value={directGenre.join(',')} onChange={(e) => setDirectGenre(e.target.value.split(','))} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
+                            </label>
+                        </div>
+
+                        {/* Phases Section */}
+                        <div style={{ marginTop: '20px' }}>
+                            <h3>Phases</h3>
+                            {directPhases.map((phase, index) => (
+                                <div key={index} style={{ marginBottom: '15px', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}>
+                                    <h4>Phase {index + 1}</h4>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Display Name:
+                                            <input type="text" value={phase.displayName} onChange={(e) => handleDirectPhaseChange(index, 'displayName', e.target.value)} style={{ marginLeft: '10px', padding: '5px', width: '250px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Start Date:
+                                            <DatePicker selected={phase.startDate} onChange={(date) => handleDirectPhaseChange(index, 'startDate', date)} showTimeSelect dateFormat="yyyy-MM-dd HH:mm" style={{ marginLeft: '10px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            End Date:
+                                            <DatePicker selected={phase.endDate} onChange={(date) => handleDirectPhaseChange(index, 'endDate', date)} showTimeSelect dateFormat="yyyy-MM-dd HH:mm" style={{ marginLeft: '10px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Max Mint Per Address:
+                                            <input type="number" value={phase.maxMintPerAddress} onChange={(e) => handleDirectPhaseChange(index, 'maxMintPerAddress', Number(e.target.value))} style={{ marginLeft: '10px', padding: '5px', width: '100px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Price (satoshi):
+                                            <input type="number" value={phase.price} onChange={(e) => handleDirectPhaseChange(index, 'price', Number(e.target.value))} style={{ marginLeft: '10px', padding: '5px', width: '100px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Is Public:
+                                            <input type="checkbox" checked={phase.isPublic} onChange={(e) => handleDirectPhaseChange(index, 'isPublic', e.target.checked)} style={{ marginLeft: '10px' }} />
+                                        </label>
+                                    </div>
+                                </div>
+                            ))}
+                            <button type="button" onClick={addDirectPhase} style={buttonStyle}>Add Phase</button>
+                        </div>
+
+                        {/* Items Section */}
+                        <div style={{ marginTop: '20px' }}>
+                            <h3>Items</h3>
+                            {directItems.map((item, itemIndex) => (
+                                <div key={itemIndex} style={{ marginBottom: '15px', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}>
+                                    <h4>Item {itemIndex + 1}</h4>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Title:
+                                            <input type="text" value={item.title} onChange={(e) => {
+                                                const newItems = [...directItems];
+                                                newItems[itemIndex].title = e.target.value;
+                                                setDirectItems(newItems);
+                                            }} style={{ marginLeft: '10px', padding: '5px', width: '250px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Supply:
+                                            <input type="number" value={item.supply} onChange={(e) => {
+                                                const newItems = [...directItems];
+                                                newItems[itemIndex].supply = Number(e.target.value);
+                                                setDirectItems(newItems);
+                                            }} style={{ marginLeft: '10px', padding: '5px', width: '100px' }} />
+                                        </label>
+                                    </div>
+                                    <div style={{ marginBottom: '8px' }}>
+                                        <label>
+                                            Keep Self:
+                                            <input type="number" value={item.keepSelf} onChange={(e) => {
+                                                const newItems = [...directItems];
+                                                newItems[itemIndex].keepSelf = Number(e.target.value);
+                                                setDirectItems(newItems);
+                                            }} style={{ marginLeft: '10px', padding: '5px', width: '100px' }} />
+                                        </label>
+                                    </div>
+                                    <h5>Files</h5>
+                                    {item.files.map((file, fileIndex) => (
+                                        <div key={fileIndex} style={{ marginBottom: '8px' }}>
+                                            <label>
+                                                File Type:
+                                                <select value={file.type} onChange={(e) => {
+                                                    const newItems = [...directItems];
+                                                    newItems[itemIndex].files[fileIndex].type = e.target.value;
+                                                    setDirectItems(newItems);
+                                                }} style={{ marginLeft: '10px', padding: '5px' }}>
+                                                    <option value="pdf">PDF</option>
+                                                    <option value="html">HTML</option>
+                                                </select>
+                                            </label>
+                                            <label style={{ marginLeft: '10px' }}>
+                                                Inscription ID:
+                                                <input type="text" value={file.inscriptionId} onChange={(e) => {
+                                                    const newItems = [...directItems];
+                                                    newItems[itemIndex].files[fileIndex].inscriptionId = e.target.value;
+                                                    setDirectItems(newItems);
+                                                }} style={{ marginLeft: '10px', padding: '5px', width: '300px' }} />
+                                            </label>
+                                        </div>
+                                    ))}
+                                    <button type="button" onClick={() => addFileToDirectItem(itemIndex)} style={buttonStyle}>Add File</button>
+                                </div>
+                            ))}
+                            <button type="button" onClick={addDirectItem} style={buttonStyle}>Add Item</button>
+                        </div>
+
+                        <div style={{ marginTop: '20px' }}>
+                            <button type="submit" style={buttonStyle}>Create Collection</button>
+                        </div>
+                    </form>
                 </div>
             )}
 
